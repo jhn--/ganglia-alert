@@ -9,7 +9,7 @@ use Carp;
 use MIME::Lite;
 use Pod::Usage;
 
-our $VERSION = '0.9.' . [qw$Revision: 9 $]->[1];
+our $VERSION = '0.9.' . [qw$Revision$]->[1];
 
 # in-memory stats
 my %history;				# history for average/stdev
