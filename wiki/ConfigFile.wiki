@@ -11,7 +11,7 @@
 || email_to || comma-delimited list of email addresses to send alerts to report (none) ||
 || email_from || from-address for email (userid@hostname) ||
 || group_by || either 'host' or 'alert' ... for reporting (host) ||
-|| log_file ||  logfile used to write first-alerts to (none) ||
+|| log_file ||  logfile used to write first-alerts to (stdout) ||
 || pid_file ||  pidfile to write pid to for daemon-mode (/var/run/ganglia-alert.pid) ||
 || gmetad_server || gmetad server to connect to (localhost:8651) ||
 || digest_secs ||  number of seconds to spool alerts before sending a || 
