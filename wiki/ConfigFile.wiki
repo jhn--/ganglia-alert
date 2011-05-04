@@ -8,7 +8,6 @@
 
 || email_to || comma-delimited list of email addresses to send alerts to report (none) ||
 || email_from || from-address for email (userid@hostname) ||
-report (none) ||
 || group_by || either 'host' or 'alert' ... for reporting (host) ||
 || log_file ||  logfile used to write first-alerts to (none) ||
 || pid_file ||  pidfile to write pod to for daemon-mode (/var/run/ganglia-alert.pid) ||
