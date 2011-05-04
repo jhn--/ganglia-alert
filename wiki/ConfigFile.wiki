@@ -50,7 +50,7 @@ Any alerts following that section are host-specific.  Hosts probably should be g
 # email_from: username@host
 # email_to: -
 
-email_to: earonesty@expressionanalysis.com
+email_to: earonesty@example.com
 pid_file: /tmp/ganglia-alert.pid
 group_by: host
 
