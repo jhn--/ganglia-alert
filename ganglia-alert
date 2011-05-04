@@ -504,16 +504,17 @@ The config file (by default /etc/ganglia-alert.conf) controls the
 operation of the alert daemon.  It contains a list of config variables, 
 and a list of alerts.
 
-Config variables (default in parenthesis):
+Config variables (default, if any, is in parenthesis):
 
- email_to	comma-delimited list of email addresses to send alerts to report (none)
+ email_to	comma-delimited list of email addresses to send alerts to report
  email_from	from-address for email (userid@HOST)
+ sendmail_path	path to sendmail, if MIME::Lite is not installed
  subject	subject template for email ($id: $cnt alerts) 
  group_by	either 'host' or 'alert', for reporting (host) 
  log_file	logfile used to write first-alerts, and daemon info to (standard output) 
  pid_file	pidfile to write pid to for daemon-mode (/var/run/ganglia-alert.pid) 
  gmetad_server	gmetad server to connect to (localhost:8651)
- digest_secs	number of seconds to spool alerts before sending a  
+ digest_secs	number of seconds to spool alerts before sending an email (10)
  sleep_secs 	number of seconds to sleep before polling gmetad (5) 
  include	include another config file 
 
@@ -523,7 +524,7 @@ Example configuration:
  log_file: /var/log/ganglia-alert.log
  alert: $disk_free < .05 * $disk_total
  alert/3: $load_one > $cpu_num * 2
- alert: $load_one_tn > 10000
+ alert: $load_one_tn > 5000
 
 =head1 AVAILABILITY
 
