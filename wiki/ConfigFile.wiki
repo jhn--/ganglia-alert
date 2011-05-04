@@ -1,0 +1,40 @@
+#summary Rules for the /etc/ganglia-alert.conf
+
+= Introduction =
+
+==Variables==
+
+{{variable: value(s)}} 
+
+|| email_to || comma-delimited list of email addresses to send alerts to ||
+report (none) ||
+|| email_from || from-address for email (userid@hostname) ||
+report (none) ||
+|| group_by || either 'host' or 'alert' ... for reporting (host) ||
+|| log_file ||  logfile used to write first-alerts to (none) ||
+|| pid_file ||  pidfile to write pod to for daemon-mode (/var/run/ganglia-alert.pid) ||
+|| digest_secs ||  number of seconds to spool alerts before sending a || 
+|| sleep_secs || number of seconds to sleep before polling gmetad (5) ||
+|| include ||  include another config file ||
+|| subject ||  subject template for email ($id: $cnt alerts) ||
+
+==Alerts==
+
+{{alert[/thresh]: expression}} 
+
+or
+
+{{!name[/thresh]: expression}} 
+
+Theshold is options and defaults to 1.  It's the number of consecutive times the expression must be nonzero to be considered an "alert".
+
+Alert expressions are "Safe" container PERL expressions, and can take advantage of arithmetic logic.  IE:  $load_one > $cpu_num*2.
+
+If an alert has no name, the expression itself is used in the report.
+
+Everything's processed in-order.  Alerts with the same name override others.
+
+Host-specific alerts can be set up with:
+{{host: name}} 
+
+Any alerts following that section are host-specific.  Hosts probably should be globs... but right now they are literal strings that must match the beginning of the hostname.  In the future, expressions that contain a '*' will be treated as a "glob" match.
