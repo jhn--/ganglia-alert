@@ -2,6 +2,8 @@
 
 = Introduction =
 
+/etc/ganglia-alert.conf controls the operation of the alert daemon.  It contains a list of config variables, and a list of alerts.
+
 ==Variables==
 
 {{{variable: value(s)}}}
@@ -36,3 +38,28 @@ Host-specific alerts can be set up with:
 {{host: name}} 
 
 Any alerts following that section are host-specific.  Hosts probably should be globs... but right now they are literal strings that must match the beginning of the hostname.  In the future, expressions that contain a '*' will be treated as a "glob" match.
+
+==Example==
+
+{{{
+
+# This is a basic ruleset, demonstrating various capabilities
+
+# digest_secs: 10
+# sleep_secs: 5
+# email_from: username@host
+# email_to: -
+
+email_to: earonesty@expressionanalysis.com
+pid_file: /tmp/ganglia-alert.pid
+group_by: host
+
+log_file: /opt/log/ganglia-alert.log
+
+alert: $disk_free < .05 * $disk_total
+alert: $load_one > $cpu_num*2
+alert/5: $load_one_tn > 5000
+alert/2: $pkts_in > 6 * $pkts_in_stdev
+alert/2: $pkts_out > 6 * $pkts_out_stdev
+
+}}}
