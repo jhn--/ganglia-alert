@@ -4,7 +4,7 @@
 
 ==Variables==
 
-{{variable: value(s)}} 
+{{{variable: value(s)}}}
 
 || email_to || comma-delimited list of email addresses to send alerts to ||
 report (none) ||
@@ -20,11 +20,11 @@ report (none) ||
 
 ==Alerts==
 
-{{alert[/thresh]: expression}} 
+{{{alert[/thresh]: expression}}}
 
 or
 
-{{!name[/thresh]: expression}} 
+{{{!name[/thresh]: expression}}}
 
 Theshold is options and defaults to 1.  It's the number of consecutive times the expression must be nonzero to be considered an "alert".
 
