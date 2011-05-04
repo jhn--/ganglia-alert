@@ -6,7 +6,7 @@ use Safe;
 use Data::Dumper;
 use Socket;
 use Carp;
-use MIME::Lite;
+
 use Pod::Usage;
 
 our $VERSION = '0.9.' . [qw$Revision$]->[1];
@@ -23,6 +23,7 @@ my %opt;				# command-line options
 $opt{conf} = "/etc/ganglia-alert.conf";
 
 my %default;				# default config values
+
 $default{pid_file} = "/var/run/ganglia-alert.pid";
 $default{digest_secs} = 30;
 $default{sleep_secs} = 5;
@@ -30,18 +31,21 @@ $default{group_by} = 'host';
 
 my $prog = "ganglia-alert $VERSION\n";
 
-GetOptions(\%opt, "daemon", "email_to|email=s", "conf|config=s", "gmetad_server|server=s", "log_file|log=s", "kill", "help") 
+GetOptions(\%opt, "daemon", "email_to|email=s", "conf|config=s", "gmetad_server|server=s", "log_file|log=s", "override=s@", "kill", "help", "report") 
 	|| pod2usage(-message=>$prog, -exit=>2);
 
 if ($opt{help}) {
-	pod2usage(-message=>$prog, -exit=>0, -verbose=>99, -sections=>"SYNOPSIS|CONFIG")
+	pod2usage(-message=>$prog, -exit=>0, -verbose=>99, -sections=>"SYNOPSIS|DESCRIPTION|CONFIG")
 }
 
 my (%conf, %alcnt, %alconf);
 
 my $uid = getpwuid($<);
 
-readconf();
+if (!readconf()) {
+	#TODO: Maybe create a simple default config for the user, and use that, rather than being rude
+	die("Can't read $opt{conf} : $!\n");
+}
 
 my $pid = 0;
 
@@ -50,10 +54,11 @@ if (open(IN, $conf{pid_file})) {
 	close IN;
 }
 
-if ($opt{kill}) {
+if ($opt{kill} || $opt{report}) {
 	# stop daemon
-	die "No pid in '$conf{pid_file}' to kill.\n" if (!$pid);
-	exit(kill(2, 0+$pid)>0);
+	die "No pid in '$conf{pid_file}' to signal.\n" if (!$pid);
+	my $sig = $opt{kill} ? 2 : 1;
+	exit(kill($sig, 0+$pid)>0);
 }
 
 if ($opt{daemon}) {
@@ -75,6 +80,7 @@ if ($opt{daemon}) {
 		xlog("info", "starting daemon");
 		my $int;
 		$SIG{INT}=sub {$int=1;};			# interrupt handler
+		$SIG{HUP}=sub {$alertm=1;};			# sig-HUP forces mail with current state
 		while(!$int) {
 			eval {dometa()};
 			eval {msgq()};
@@ -93,7 +99,7 @@ if ($opt{daemon}) {
 
 sub dometa {
 	readconf();
-	my ($host,$port) = optval("gmetad_server") =~ /^\s*([^:]+):?(\d+)?/;
+	my ($host,$port) = $conf{"gmetad_server"} =~ /^\s*([^:]+):?(\d+)?/;
 	$host = "localhost" if !$host;
 	$port = 8651 if !$port;
 	my $iaddr = inet_aton($host) || fail("Can't connect to: $host\n");
@@ -278,13 +284,51 @@ sub readconf {
 	my $modtime = (stat($opt{conf}))[9];
 	return if $readlast == $modtime;
 	return if !open IN, $opt{conf}; close IN;
+
 	%conf = %default;
+
+	# set log file from options
+	$conf{log_file} = $opt{log_file} if defined $opt{log_file};
 
 	xlog("info", "Reading config: $opt{conf}") if ($opt{daemon});
 
 	_readconf($opt{conf});
 
+	# override config from command-line
+	for (qw(gmetad_server log_file email_to)) {
+		$conf{$_} = $opt{$_} if defined $opt{$_};
+	}
+
+	for (@{$opt{override}}) {
+                if (/^\s*([a-z][^:]+?)\s*:\s*(.*?)\s*$/i) {
+			# only support regular vars in command line
+			my ($n, $v) = (lc($1), $2);
+			$conf{$n} = $v;
+		} else {
+			# die if command line is wrong
+			fail("Invalid override option: $_");
+		}
+	}
+
+	if ($conf{email_to}) {
+		if (!$conf{sendmail_path}) {
+			eval {
+				require MIME::Lite;
+			};
+			if ($@) {
+				$conf{sendmail_path} = `which sendmail 2> /dev/null`;
+				chomp $conf{sendmail_path};
+
+				if (!$conf{sendmail_path}) {
+					xlog("error", "Can't send email without MIME::Lite or sendmail installed, disabling email reports.");
+					$conf{email_to} = '';
+				}
+			}
+		}
+	}
+
 	$readlast = $modtime; 
+	return 1;
 }
 
 sub fail {
@@ -317,8 +361,8 @@ sub msgq {
 						$rpt .= "\t" . scalar(localtime($d->{last}));
 					}
 					$rpt .= "\n";
+					++$cnt;
 				}
-				++$cnt;
 			}
 		}
 		}
@@ -338,11 +382,12 @@ sub msgq {
 							$rpt .= "\t" . scalar(localtime($d->{last}));
 						}
 						$rpt .= "\n";
+						++$cnt;
 					}
 				}
 			}
 		}
-	
+
 		# this is all to get the most specific id	
 		my $id = 'Multiple Grids';
 		if (keys(%grid)==1) {
@@ -360,6 +405,8 @@ sub msgq {
 			$id =~ s/^unspecified:?//;
 		}
 
+		$id = "All" if (keys(%grid)==0);
+
 		my $subject = $conf{subject};
 		if (!$subject) {
 			$subject = "$cnt alerts for $id"; 
@@ -367,20 +414,33 @@ sub msgq {
 			$subject =~ s/\$count\b/$cnt/g;
 			$subject =~ s/\$id\b/$id/g;
 		}
-		my $addr = optval('email_to');
-		xlog("email", $subject);
+		my $addr = $conf{email_to};
+		xlog("info", "sending email", "$subject");
 		if ($addr eq '-') {
 			printf STDERR "Would have sent email with subject: $subject\n";
 			$alertm = 0;
 		} else {
-			my $msg = MIME::Lite->new(
-				From     => $conf{email_from} ? $conf{email_from} : ("$uid\@" . ($ENV{HOST} ? $ENV{HOST} : 'localhost')),
-				To       => $addr,
-				Subject  => $subject,
-				Type     => 'text/plain',
-				Data     => $rpt
-			);
-			$alertm = 0 if $msg->send;
+			my $ok = 0;
+			my $from = $conf{email_from} ? $conf{email_from} : ("$uid\@" . ($ENV{HOST} ? $ENV{HOST} : 'localhost'));
+			if ($conf{sendmail_path}) {
+				$ok = open(SM, "|$conf{sendmail_path} -f $from -t $addr");
+				$ok = $ok && print(SM "From: $from\nTo: $addr\nSubject: $subject\n\n$rpt");
+				$ok = $ok && close(SM);
+			} else {
+				my $msg = MIME::Lite->new(
+					From     => $from,
+					To       => $addr,
+					Subject  => $subject,
+					Type     => 'text/plain',
+					Data     => $rpt
+				);
+				$ok = $msg->send;
+			}
+			if ($ok) {
+				$alertm = 0;	
+			} else {
+				xlog("error", "Failed to send mail using " . ($conf{sendmail_path} ? "sendmail" : "MIME::Lite") . "\n");
+			}
 		}
 	}
 }
@@ -389,7 +449,7 @@ sub xlog {
 	my $m = join("\t", @_);
 	$m =~ s/\n/ /g;
 	my $line = scalar(localtime) . "\t" . $m . "\n";
-	my $log = optval("log_file");
+	my $log = $conf{"log_file"};
 	if ($log && ! ($log eq '-')) {
 		open LOG, ">>" . $log;
 		print LOG $line;
@@ -408,12 +468,6 @@ sub uniq {
 	return keys %a;
 }
 
-sub optval {
-	my ($n) = @_;
-	return $opt{$n} if ($opt{$n});
-	return ref $conf{$n} ? $conf{$n}->[0] : $conf{$n} ? $conf{$n} : '';
-}
-
 __END__
 
 =head1 NAME
@@ -425,7 +479,8 @@ B<ganglia-alert> - Use gmetad data to send email alerts
 B<ganglia-alert> [-d|-k] <options>
 
  -d|--daemon		start the alert daemon
- -k|--kill		kill the currently running daemon
+ -k|--kill		kill the currently running daemon (-INT)
+ -r|--report		send a report now (-HUP)
  -c|--conf FILE		config file location (/etc/ganglia-alert.conf)
  -h|--help		documentation
 
@@ -441,7 +496,7 @@ Connects to a gmetad server, runs a bunch of tests on the data contained
 therein, and emails someone if one or more of those tests return
 a nonzero result.
 
-Useful for very simple alert monitoring on a cluster.
+Simple monitoring on a cluster.
 
 =head1 CONFIG
 
@@ -462,9 +517,21 @@ Config variables (default in parenthesis):
  sleep_secs 	number of seconds to sleep before polling gmetad (5) 
  include	include another config file 
 
+Example configuration:
+
+ email_to: earonesty@example.com
+ log_file: /var/log/ganglia-alert.log
+ alert: $disk_free < .05 * $disk_total
+ alert/3: $load_one > $cpu_num * 2
+ alert: $load_one_tn > 10000
+
 =head1 AVAILABILITY
 
+Project website: L<http://ganglia-alert.googlecode.com/>, latest version: L<http://ganglia-alert.googlecode.com/svn/trunk/ganglia-alert>
 
+=head1 COREQUISITES
+
+C<MIME::Lite> module to send alerts.
 
 =head1 SCRIPT CATEGORIES
 
@@ -472,7 +539,7 @@ UNIX : System_administration
 
 =head1 AUTHOR
 
-Erik Aronesty C<earonesty@cpan.org>
+Copyright 2011 Erik Aronesty C<earonesty@cpan.org>
 
 =head1 LICENSE
 
