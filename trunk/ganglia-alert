@@ -6,6 +6,7 @@ use Safe;
 use Data::Dumper;
 use Socket;
 use Carp;
+use POSIX ":sys_wait_h";
 
 use Pod::Usage;
 
@@ -38,7 +39,7 @@ if ($opt{help}) {
 	pod2usage(-message=>$prog, -exit=>0, -verbose=>99, -sections=>"SYNOPSIS|DESCRIPTION|CONFIG")
 }
 
-my (%conf, %alcnt, %alconf);
+my (%conf, %alcnt, %alconf, %exec_pids);
 
 my $uid = getpwuid($<);
 
@@ -84,6 +85,7 @@ if ($opt{daemon}) {
 		while(!$int) {
 			eval {dometa()};
 			eval {msgq()};
+			eval {waitpids()};
 			my $secs = $conf{sleep_secs} > 0 ? $conf{sleep_secs} : 5;
 			sleep($secs);		# snooze
 		}
@@ -95,6 +97,16 @@ if ($opt{daemon}) {
 	dometa();
 	$conf{digest_secs} = -1;
 	msgq();						
+}
+
+sub waitpids {
+	my $kid;
+	while ( ($kid = waitpid(-1, WNOHANG)) > 0 ) {
+		if ($?) {
+			xlog("error", "Error executing '$exec_pids{$kid}' : $?");
+		}
+		delete $exec_pids{$kid};
+	};
 }
 
 sub dometa {
@@ -174,12 +186,14 @@ sub eval_alert {
 #${$safe->varglob('x')} = 5;
 #die $safe->reval("\$x+2");
 
-	my ($name, $expr, $lev) = ($alert->{name}, $alert->{expr}, $alert->{level});
+	my ($name, $expr, $lev, $cmd, $cmd_lev) = ($alert->{name}, $alert->{expr}, $alert->{level}, $alert->{cmd}, $alert->{cmd_level});
 
 	for (keys(%{$alert->{host}})) {
 		if ($hdat->{name} =~ /^\Q$_/) {
 			$expr = $alert->{host}->{$_}->{expr};
 			$lev = $alert->{host}->{$_}->{level};
+			$cmd = $alert->{host}->{$_}->{cmd};
+			$cmd_lev = $alert->{host}->{$_}->{cmd_level};
 		}
 	}
 
@@ -195,6 +209,23 @@ sub eval_alert {
 
 	if ($ret) {										# alert triggered
 		$alcnt{$name}->{$key}->{cnt}++;
+		if ($cmd_lev && $alcnt{$name}->{$key}->{cnt} == $cmd_lev) {
+			$cmd = $safe->reval("\"$cmd\"");
+			my $pid;
+			if (!($pid=fork)) {
+				# child or undef
+				if (defined($pid)) {
+					# child
+					exec($cmd) || xlog("error", "Error running '$cmd' : $!");
+					exit;                                                   # in case it fails
+				} else {
+					xlog("error", "Can't fork for exec on $name: $!");
+				}
+			} else {
+				# keep cmd, so after a failed wait, you can log what failed
+				$exec_pids{$pid} = $cmd;
+			}
+		}
 		# passed thresh for first time?  send an email
 		if ($alcnt{$name}->{$key}->{cnt} == $lev) {
 			$alertm = time();							# email first needed flag
@@ -241,6 +272,8 @@ sub xtag {
 	return \%r;
 }
 
+my @prev_alerts;
+
 # read config
 sub _readconf {
 	my ($conf, $host) = @_;
@@ -252,11 +285,34 @@ sub _readconf {
                 next if /^\s*#/;
                 if (/^\s*([^:]+?)\s*(?:\/(\d+))?\s*:\s*(.*?)\s*$/) {
 			my ($n, $mod, $v) = (lc($1), $2, $3);
+
+			if ($conf{define}) {
+				for (keys %{$conf{define}}) {
+					if ($v =~ s/\${\Q$_\E}/$conf{define}->{$_}/g) {
+						# print("Replaced \${$_} : '$v');
+					}
+				}
+			}
+
 			if ($n eq 'include') {
                         	_readconf($v, $host);
+			} elsif ($n eq 'define') {
+                      		my ($n, $v) = $v =~ m/\s*([^=]+?)\s*=\s*(.*)/;
+				$conf{define}->{$n} = $v;
 			} elsif ($n eq 'host') {
 				$host = $v;
+			} elsif ($n eq 'exec') {
+				if (!@prev_alerts) {
+					xlog("error", "Can't define an exec ($v) without a previous alert");
+				} else {
+					$mod = $mod ? $mod : $prev_alerts[0]->{level};
+					for (@prev_alerts) {
+						$_->{cmd_level} = $mod;
+						$_->{cmd} = $v;
+					}
+				}
 			} elsif ($n =~ m/^\!/ || $n eq 'alert') {
+				@prev_alerts = ();
 				my $k = $v;
 				$k = $1 if ($n =~ m/^!(\w+)/);
 				$mod = $mod ? $mod : 1;
@@ -265,11 +321,13 @@ sub _readconf {
 						$alconf{$k}->{name} = $k;
 						$alconf{$k}->{host}->{$h}->{expr} = $v;
 						$alconf{$k}->{host}->{$h}->{level} = $mod;
+						push @prev_alerts, $alconf{$k}->{host}->{$h};
 					}
 				} else {
 					$alconf{$k}->{name} = $k;
 					$alconf{$k}->{expr} = $v;
 					$alconf{$k}->{level} = $mod;
+					push @prev_alerts, $alconf{$k};
 				}
 			} else {
 				$conf{$n} = $v;
@@ -280,15 +338,20 @@ sub _readconf {
 	return 1;
 }
 
+my $save_log;
+
 sub readconf {
 	my $modtime = (stat($opt{conf}))[9];
 	return if $readlast == $modtime;
 	return if !open IN, $opt{conf}; close IN;
 
+	# save logfile	
+	$save_log = $conf{log_file};
+
 	%conf = %default;
 
-	# set log file from options
-	$conf{log_file} = $opt{log_file} if defined $opt{log_file};
+	# set log file from options or from the previous setting before the xlog command below
+	$conf{log_file} = $opt{log_file} ? $opt{log_file} : $save_log ? $save_log : '';
 
 	xlog("info", "Reading config: $opt{conf}") if ($opt{daemon});
 
@@ -504,6 +567,8 @@ The config file (by default /etc/ganglia-alert.conf) controls the
 operation of the alert daemon.  It contains a list of config variables, 
 and a list of alerts.
 
+Variables are formatted as "name: value" in the config file.
+
 Config variables (default, if any, is in parenthesis):
 
  email_to	comma-delimited list of email addresses to send alerts to report
@@ -516,7 +581,20 @@ Config variables (default, if any, is in parenthesis):
  gmetad_server	gmetad server to connect to (localhost:8651)
  digest_secs	number of seconds to spool alerts before sending an email (10)
  sleep_secs 	number of seconds to sleep before polling gmetad (5) 
- include	include another config file 
+ include	include another config file
+ define		variable=value, replaces instances of ${variable} with value in all
+		subsequent config file directives
+
+Alerts & actions:
+
+ alert[/N]	defines an alert activated when 'N' consecutive evaluation of the 
+		associated expression are nonzero
+
+ host		space-delimited list of hosts that future alerts ar bound to
+		default is to bind alerts to all hosts
+
+ exec[/N]	associated with the immediately previous alert definition.  will 
+		execute the command (via exec()), if the alert is triggered
 
 Example configuration:
 
@@ -525,6 +603,7 @@ Example configuration:
  alert: $disk_free < .05 * $disk_total
  alert/3: $load_one > $cpu_num * 2
  alert: $load_one_tn > 5000
+ exec/3: ssh $host /etc/init.d/ganglia-monitor restart
 
 =head1 AVAILABILITY
 
