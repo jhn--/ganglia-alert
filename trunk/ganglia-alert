@@ -77,11 +77,20 @@ if ($opt{daemon}) {
 		print P $$; 
 		close P;					# save pid
 
+		open STDIN,  '</dev/null';
+		open STDOUT, ">/dev/null";
+		if ($conf{log_file} && !($conf{log_file} eq '-')) {
+			open STDERR, '>&STDOUT';
+		}
+		chdir '/';
+		POSIX::setsid();
+
 		# OK, startup happened, from now on, all messages are reported via xlog... and are nonfatal
 		xlog("info", "starting daemon");
 		my $int;
 		# todo... change to a simple UDP protocol?  signals can be wonky
 		$SIG{INT}=sub {$int=1;};			# interrupt handler
+		$SIG{TERM} = $SIG{INT};
 		$SIG{HUP}=sub {$alertm=1;};			# sig-HUP forces mail with current state todo: maybe you just want it in a file
 		while(!$int) {
 			eval {dometa()};
@@ -388,6 +397,14 @@ sub readconf {
 					$conf{email_to} = '';
 				}
 			}
+		}
+	}
+
+	
+	# remove alerts that are left-over from previous config
+	for my $k (keys %alcnt) {
+		if (!$alconf{$k}) {
+			delete $alcnt{$k};
 		}
 	}
 
