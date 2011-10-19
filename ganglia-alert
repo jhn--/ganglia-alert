@@ -188,6 +188,8 @@ sub safe_from_hdat {
                         ${$safe->varglob($metric . "_stdev")} = 0;
                 }
         }
+	${$safe->varglob("reported")}=$hdat->{reported};
+	${$safe->varglob("tn")}=$hdat->{tn};
 	return $safe;
 }
 
