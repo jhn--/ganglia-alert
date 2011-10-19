@@ -504,20 +504,24 @@ sub msgq {
 			$alertm = 0;
 		} else {
 			my $ok = 0;
-			my $from = $conf{email_from} ? $conf{email_from} : ("$uid\@" . ($ENV{HOST} ? $ENV{HOST} : 'localhost'));
-			if ($conf{sendmail_path}) {
-				$ok = open(SM, "|$conf{sendmail_path} -f $from -t $addr");
-				$ok = $ok && print(SM "From: $from\nTo: $addr\nSubject: $subject\n\n$rpt");
-				$ok = $ok && close(SM);
+			if ($conf{email_to}) {
+				my $from = $conf{email_from} ? $conf{email_from} : ("$uid\@" . ($ENV{HOST} ? $ENV{HOST} : 'localhost'));
+				if ($conf{sendmail_path}) {
+					$ok = open(SM, "|$conf{sendmail_path} -f $from -t $addr");
+					$ok = $ok && print(SM "From: $from\nTo: $addr\nSubject: $subject\n\n$rpt");
+					$ok = $ok && close(SM);
+				} else {
+					my $msg = MIME::Lite->new(
+						From     => $from,
+						To       => $addr,
+						Subject  => $subject,
+						Type     => 'text/plain',
+						Data     => $rpt
+					);
+					$ok = $msg->send;
+				}
 			} else {
-				my $msg = MIME::Lite->new(
-					From     => $from,
-					To       => $addr,
-					Subject  => $subject,
-					Type     => 'text/plain',
-					Data     => $rpt
-				);
-				$ok = $msg->send;
+				$ok = 1;
 			}
 			if ($ok) {
 				$alertm = 0;	
